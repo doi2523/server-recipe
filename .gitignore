@@ -20,3 +20,5 @@ uploads/
 .vercel/
 dist/
 out/
+
+firebase-config.json
