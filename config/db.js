@@ -1,7 +1,5 @@
-require('dotenv').config();
-const mysql = require('mysql2');
+const mysql = require("mysql2");
 
-// Kết nối với cơ sở dữ liệu MySQL sử dụng các thông tin từ .env
 const db = mysql.createConnection({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
