@@ -1,12 +1,19 @@
-import mysql from "mysql2/promise";
+// db.js
+const mysql = require("mysql2");
 
-const pool = mysql.createPool({
+const db = mysql.createConnection({
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "root",
   password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "recipes_db",
-  waitForConnections: true,
-  connectionLimit: 10,
+  database: process.env.DB_NAME || "recipes_db"
 });
 
-export default pool;
+db.connect((err) => {
+  if (err) {
+    console.error("Không thể kết nối đến cơ sở dữ liệu:", err);
+    return;
+  }
+  console.log("Kết nối đến MySQL thành công!");
+});
+
+module.exports = db;

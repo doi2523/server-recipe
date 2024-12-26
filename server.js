@@ -3,16 +3,19 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
 const path = require("path");
+const fs = require("fs");
+require('dotenv').config();
 
 const app = express();
 
 // Kết nối MySQL
 const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST || "localhost",
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASSWORD || "",
+  database: process.env.DB_NAME || "recipes_db",
 });
 
 db.connect((err) => {
@@ -24,77 +27,29 @@ db.connect((err) => {
 });
 
 // Cấu hình middleware
-app.use(cors()); // Để client React có thể gọi API từ server
-app.use(bodyParser.json()); // Để đọc body của request gửi dưới dạng JSON
+app.use(cors());
+app.use(bodyParser.json());
 
-// Cấu hình multer để xử lý upload ảnh
+// Cấu hình Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Cấu hình Multer (lưu ảnh tạm thời để upload lên Cloudinary)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Lưu ảnh vào thư mục uploads
+    cb(null, "temp/"); // Thư mục tạm để lưu file
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname)); // Tạo tên file duy nhất
+    cb(null, Date.now() + path.extname(file.originalname)); // Tên file duy nhất
   },
 });
 const upload = multer({ storage });
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-// API: Lấy danh sách công thức
-app.get('/api/select-recipes', async (req, res) => {
-    try {
-      // Sử dụng promise để lấy dữ liệu
-      const [recipes] = await db.promise().query('SELECT * FROM recipes');
-      
-      // Fetch ingredients and steps for each recipe
-      for (let i = 0; i < recipes.length; i++) {
-        const [ingredients] = await db.promise().query('SELECT name, quantity, unit FROM ingredients WHERE recipe_id = ?', [recipes[i].id]);
-        const [steps] = await db.promise().query('SELECT step_number, instruction FROM steps WHERE recipe_id = ? ORDER BY step_number', [recipes[i].id]);
-  
-        // Gắn nguyên liệu và các bước vào công thức
-        recipes[i].ingredients = ingredients;
-        recipes[i].steps = steps;
-      }
-  
-      // Trả về danh sách công thức với đầy đủ thông tin
-      res.status(200).json(recipes);
-    } catch (error) {
-      console.error('Error fetching recipes:', error);
-      res.status(500).json({ message: 'Lỗi khi lấy danh sách công thức' });
-    }
-  });
-// API: Xóa công thức
-app.delete('/api/delete-recipe/:id', (req, res) => {
-    const recipeId = req.params.id;
-  
-    // Bắt đầu từ xóa các bước liên quan đến công thức
-    db.query('DELETE FROM steps WHERE recipe_id = ?', [recipeId], (err) => {
-      if (err) {
-        console.error('Lỗi khi xóa các bước:', err);
-        return res.status(500).json({ message: 'Lỗi khi xóa các bước' });
-      }
-  
-      // Xóa các nguyên liệu liên quan đến công thức
-      db.query('DELETE FROM ingredients WHERE recipe_id = ?', [recipeId], (err) => {
-        if (err) {
-          console.error('Lỗi khi xóa nguyên liệu:', err);
-          return res.status(500).json({ message: 'Lỗi khi xóa nguyên liệu' });
-        }
-  
-        // Cuối cùng, xóa công thức
-        db.query('DELETE FROM recipes WHERE id = ?', [recipeId], (err) => {
-          if (err) {
-            console.error('Lỗi khi xóa công thức:', err);
-            return res.status(500).json({ message: 'Lỗi khi xóa công thức' });
-          }
-  
-          res.status(200).json({ message: 'Công thức đã được xóa thành công' });
-        });
-      });
-    });
-  });
-  
-  
-// API: Thêm công thức mới
-app.post("/api/add-recipes", upload.single("image"), (req, res) => {
+
+// API: Thêm công thức mới với Cloudinary
+app.post("/api/add-recipes", upload.single("image"), async (req, res) => {
   const {
     name,
     description,
@@ -106,43 +61,49 @@ app.post("/api/add-recipes", upload.single("image"), (req, res) => {
     ingredients,
     country,
   } = req.body;
-  const image = req.file ? req.file.filename : null; // Lưu tên file ảnh nếu có
+  const imageFile = req.file ? req.file.path : null;
 
-  // Kiểm tra nếu các trường bắt buộc không có giá trị
   if (!name || !description || !ingredients || !steps) {
-    return res
-      .status(400)
-      .json({
-        message:
-          "Vui lòng cung cấp đầy đủ thông tin công thức, nguyên liệu và bước thực hiện.",
-      });
+    return res.status(400).json({
+      message:
+        "Vui lòng cung cấp đầy đủ thông tin công thức, nguyên liệu và bước thực hiện.",
+    });
   }
 
-  // Kiểm tra và đảm bảo ingredients là một mảng
+  // Kiểm tra dữ liệu ingredients và steps
   let ingredientsArray = [];
+  let stepsArray = [];
   try {
     ingredientsArray = Array.isArray(ingredients)
       ? ingredients
       : JSON.parse(ingredients);
-  } catch (error) {
-    return res
-      .status(400)
-      .json({ message: "Dữ liệu nguyên liệu không hợp lệ." });
-  }
-
-  // Kiểm tra và đảm bảo steps là một mảng
-  let stepsArray = [];
-  try {
     stepsArray = Array.isArray(steps) ? steps : JSON.parse(steps);
   } catch (error) {
-    return res.status(400).json({ message: "Dữ liệu bước không hợp lệ." });
+    return res.status(400).json({ message: "Dữ liệu không hợp lệ." });
   }
 
-  // Chèn công thức vào bảng Recipes
-  const query =
+  let imageUrl = null;
+
+  // Upload ảnh lên Cloudinary nếu có
+  if (imageFile) {
+    try {
+      const result = await cloudinary.uploader.upload(imageFile, {
+        folder: "images-recipes",
+      });
+      imageUrl = result.secure_url; // URL ảnh từ Cloudinary
+      fs.unlinkSync(imageFile); // Xóa file tạm sau khi upload
+    } catch (error) {
+      console.error("Lỗi khi upload ảnh lên Cloudinary:", error);
+      return res.status(500).json({ message: "Lỗi khi upload ảnh." });
+    }
+  }
+
+  // Thêm công thức vào bảng recipes
+  const recipeQuery =
     "INSERT INTO recipes (name, description, servings, preparation_time, cooking_time, difficulty, country, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())";
+
   db.query(
-    query,
+    recipeQuery,
     [
       name,
       description,
@@ -151,17 +112,17 @@ app.post("/api/add-recipes", upload.single("image"), (req, res) => {
       cooking_time,
       difficulty,
       country,
-      image,
+      imageUrl,
     ],
     (err, result) => {
       if (err) {
-        console.error("Lỗi khi thêm công thức:", err); // In chi tiết lỗi ra console
-        return res.status(500).json({ message: "Lỗi khi thêm công thức" });
+        console.error("Lỗi khi thêm công thức:", err);
+        return res.status(500).json({ message: "Lỗi khi thêm công thức." });
       }
 
       const recipeId = result.insertId;
 
-      // Chèn các nguyên liệu vào bảng Ingredients
+      // Thêm ingredients và steps
       const ingredientQueries = ingredientsArray.map((ingredient) => {
         return new Promise((resolve, reject) => {
           const ingredientQuery =
@@ -180,11 +141,10 @@ app.post("/api/add-recipes", upload.single("image"), (req, res) => {
         });
       });
 
-      // Chèn các bước vào bảng Steps
       const stepQueries = stepsArray.map((step, index) => {
         return new Promise((resolve, reject) => {
           const stepQuery =
-            "INSERT INTO Steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)";
+            "INSERT INTO steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)";
           db.query(stepQuery, [recipeId, index + 1, step], (err) => {
             if (err) {
               reject("Lỗi khi thêm bước: " + err);
@@ -195,17 +155,76 @@ app.post("/api/add-recipes", upload.single("image"), (req, res) => {
         });
       });
 
-      // Khi tất cả các thao tác trên bảng Ingredients và Steps hoàn thành
+      // Chờ tất cả các query hoàn thành
       Promise.all([...ingredientQueries, ...stepQueries])
         .then(() => {
           res.status(200).json({ message: "Thêm công thức thành công!" });
         })
         .catch((error) => {
-          console.error("Lỗi tổng hợp:", error); // In lỗi tổng hợp
+          console.error("Lỗi tổng hợp:", error);
           res.status(500).json({ message: error });
         });
     }
   );
+});
+app.get('/api/select-recipes', async (req, res) => {
+  try {
+    // Lấy danh sách công thức
+    const [recipes] = await db.promise().query('SELECT * FROM recipes');
+    
+    // Tạo các promises để lấy nguyên liệu và các bước cho từng công thức
+    const recipePromises = recipes.map(async (recipe) => {
+      // Lấy nguyên liệu của công thức
+      const [ingredients] = await db.promise().query('SELECT name, quantity, unit FROM ingredients WHERE recipe_id = ?', [recipe.id]);
+      // Lấy các bước của công thức
+      const [steps] = await db.promise().query('SELECT step_number, instruction FROM steps WHERE recipe_id = ? ORDER BY step_number', [recipe.id]);
+
+      // Gắn nguyên liệu và các bước vào công thức
+      recipe.ingredients = ingredients;
+      recipe.steps = steps;
+
+      return recipe;
+    });
+
+    // Chờ tất cả các promises hoàn thành
+    const recipesWithDetails = await Promise.all(recipePromises);
+
+    // Trả về danh sách công thức với đầy đủ thông tin
+    res.status(200).json(recipesWithDetails);
+  } catch (error) {
+    console.error('Error fetching recipes:', error);
+    res.status(500).json({ message: 'Lỗi khi lấy danh sách công thức' });
+  }
+});
+// API: Xóa công thức
+app.delete('/api/delete-recipe/:id', (req, res) => {
+  const recipeId = req.params.id;
+
+  // Bắt đầu từ xóa các bước liên quan đến công thức
+  db.query('DELETE FROM steps WHERE recipe_id = ?', [recipeId], (err) => {
+    if (err) {
+      console.error('Lỗi khi xóa các bước:', err);
+      return res.status(500).json({ message: 'Lỗi khi xóa các bước' });
+    }
+
+    // Xóa các nguyên liệu liên quan đến công thức
+    db.query('DELETE FROM ingredients WHERE recipe_id = ?', [recipeId], (err) => {
+      if (err) {
+        console.error('Lỗi khi xóa nguyên liệu:', err);
+        return res.status(500).json({ message: 'Lỗi khi xóa nguyên liệu' });
+      }
+
+      // Cuối cùng, xóa công thức
+      db.query('DELETE FROM recipes WHERE id = ?', [recipeId], (err) => {
+        if (err) {
+          console.error('Lỗi khi xóa công thức:', err);
+          return res.status(500).json({ message: 'Lỗi khi xóa công thức' });
+        }
+
+        res.status(200).json({ message: 'Công thức đã được xóa thành công' });
+      });
+    });
+  });
 });
 
 // Chạy server
