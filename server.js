@@ -184,7 +184,7 @@ app.post("/api/add-recipes", upload.single("image"), (req, res) => {
       const stepQueries = stepsArray.map((step, index) => {
         return new Promise((resolve, reject) => {
           const stepQuery =
-            "INSERT INTO steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)";
+            "INSERT INTO Steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)";
           db.query(stepQuery, [recipeId, index + 1, step], (err) => {
             if (err) {
               reject("Lỗi khi thêm bước: " + err);
