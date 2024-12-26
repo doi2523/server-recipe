@@ -41,6 +41,10 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+const tempDir = path.join(__dirname, 'temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir);
+}
 
 // Cấu hình Multer (lưu ảnh tạm thời để upload lên Cloudinary)
 const storage = multer.diskStorage({
