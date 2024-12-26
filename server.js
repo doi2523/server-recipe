@@ -11,19 +11,24 @@ require('dotenv').config();
 const app = express();
 
 // Kết nối MySQL
-const db = mysql.createConnection({
+// Thay đổi từ createConnection thành createPool
+const db = mysql.createPool({
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "root",
   password: process.env.DB_PASSWORD || "",
   database: process.env.DB_NAME || "recipes_db",
+  waitForConnections: true,  // Đảm bảo đợi khi không có kết nối
+  connectionLimit: 10,       // Số kết nối tối đa trong pool
+  queueLimit: 0             // Không giới hạn số lượng yêu cầu trong hàng đợi
 });
 
-db.connect((err) => {
+db.getConnection((err, connection) => {
   if (err) {
     console.error("Không thể kết nối đến cơ sở dữ liệu:", err);
     return;
   }
   console.log("Kết nối đến MySQL thành công!");
+  connection.release();  // Giải phóng kết nối về pool sau khi kiểm tra
 });
 
 // Cấu hình middleware
